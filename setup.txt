@@ -1,2 +1,0 @@
-Windows: run $env:FLASK_APP = "main"
-Linux: run export FLASK_APP=main.py
