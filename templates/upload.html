@@ -1,8 +1,138 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container">
-  <h1>Upload Page</h1>
-  <p>UNDER CONSTRUCTION</p>
+<div>
+    <h1 style="text-align: center; padding-bottom: 20px;">
+        Upload items here
+    </h1>
 </div>
+<!-- Drag & Drop Upload Block -->
+<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mx-auto" style="max-width: 720px;">
+  <!-- Hidden file input -->
+  <input id="file-input" type="file" name="files" multiple hidden>
+
+  <!-- Dropzone (clickable) -->
+  <label id="dropzone" for="file-input" class="dropzone d-flex flex-column justify-content-center align-items-center text-center">
+    <svg aria-hidden="true" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
+    <div class="mt-3">
+      <div class="fw-semibold">Drag & drop files here</div>
+      <div class="text-muted small">or click to select</div>
+    </div>
+  </label>
+
+  <!-- Manual upload button -->
+  <div class="text-center mt-3">
+    <button type="button" id="browse-btn" class="btn btn-primary">Choose files</button>
+  </div>
+
+  <!-- File list -->
+  <ul id="file-list" class="list-group list-group-flush mt-3"></ul>
+</form>
+
+<style>
+  .dropzone {
+    border: 2px dashed #6c757d;
+    border-radius: 16px;
+    min-height: 240px;
+    background: #f8f9fa;
+    color: #495057;
+    cursor: pointer;
+    transition: background-color .2s, border-color .2s, box-shadow .2s;
+    user-select: none;
+  }
+  .dropzone:hover,
+  .dropzone:focus-within {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13,110,253,.15);
+  }
+  .dropzone.dragover {
+    background: #e7f1ff;
+    border-color: #0d6efd;
+  }
+  .remove-btn {
+    cursor: pointer;
+    color: #dc3545;
+    font-weight: bold;
+    margin-left: auto;
+  }
+</style>
+
+<script>
+(function () {
+  const dropzone = document.getElementById('dropzone');
+  const input    = document.getElementById('file-input');
+  const browse   = document.getElementById('browse-btn');
+  const list     = document.getElementById('file-list');
+
+  // internal file store (since input.files is read-only in JS)
+  let files = [];
+
+  browse.addEventListener('click', () => input.click());
+
+  function renderList() {
+    list.innerHTML = '';
+    files.forEach((file, idx) => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item d-flex align-items-center';
+
+      const span = document.createElement('span');
+      span.textContent = file.name;
+
+      const remove = document.createElement('span');
+      remove.innerHTML = '&times;';
+      remove.className = 'remove-btn ms-2';
+      remove.addEventListener('click', () => {
+        files.splice(idx, 1);
+        updateInput();
+        renderList();
+      });
+
+      li.appendChild(span);
+      li.appendChild(remove);
+      list.appendChild(li);
+    });
+  }
+
+  function updateInput() {
+    // recreate a FileList using DataTransfer
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    input.files = dt.files;
+  }
+
+  input.addEventListener('change', () => {
+    files = [...files, ...input.files];  // merge new selections
+    updateInput();
+    renderList();
+  });
+
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      e.stopPropagation();
+    })
+  );
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, () => dropzone.classList.add('dragover'))
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, () => dropzone.classList.remove('dragover'))
+  );
+
+  dropzone.addEventListener('drop', e => {
+    const dt = e.dataTransfer;
+    if (!dt || !dt.files) return;
+    files = [...files, ...dt.files];
+    updateInput();
+    renderList();
+  });
+})();
+</script>
+
+
 {% endblock %}
