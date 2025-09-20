@@ -1,5 +1,7 @@
 from flask import Flask, render_template
 from flask_bootstrap import Bootstrap
+from backend import scanner, renamer
+import os
 app = Flask(__name__)
 bootstrap = Bootstrap(app)
 
@@ -23,3 +25,4 @@ def uploadPage():
 
 if __name__ == "__main__":
     app.run(debug=True)
+    os.makedirs(app.config['TMP_DIR'], exist_ok=True)
