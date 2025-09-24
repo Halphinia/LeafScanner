@@ -9,6 +9,10 @@ bootstrap = Bootstrap(app)
 def index():
     return render_template('test.html')
 
+@app.route('/contact')
+def contact():
+    return render_template('contact.html')
+
 
 @app.route('/home')
 def home():
