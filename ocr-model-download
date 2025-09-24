@@ -1,0 +1,6 @@
+create a new folder called "model"
+
+inside folder, run the following:
+
+git lfs install
+git clone https://huggingface.co/microsoft/trocr-base-handwritten
