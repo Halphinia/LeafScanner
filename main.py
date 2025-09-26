@@ -13,10 +13,9 @@ def index():
 def contact():
     return render_template('contact.html')
 
-
 @app.route('/home')
 def home():
-    return '<h1>Heh kasdhfkljsahdflkjashflkjsahfdsakjlhfd</h1>'
+    return render_template('test.html')
 
 @app.route('/about')
 def aboutPage():
@@ -25,7 +24,6 @@ def aboutPage():
 @app.route('/upload')
 def uploadPage():
     return render_template('upload.html')
-
 
 if __name__ == "__main__":
     app.run(debug=True)

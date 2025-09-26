@@ -3,7 +3,7 @@ Commandline Version of LeafScanner
 '''
 
 import argparse, os
-import scanner, renamer
+from backend import scanner, renamer
 
 def main():
     parser = argparse.ArgumentParser(
@@ -25,12 +25,11 @@ def filePipeline(file):
     print("Single file pipeline")
 
 def folderPipeline(folder):
-    print("Folder pipeline")
+    folderIn = folderInput(folder)
+    scanner.folderLoad(folderIn)
 
 def folderInput(folderPath):
     return [os.path.join(folderPath, f) for f in os.listdir(folderPath) if f.endswith(".jpg") or f.endswith(".hmic") or f.endswith(".png")]
 
 if __name__ == '__main__':
-    print("Welcome to LeafScanner\n"
-          "for assistance, type \"--help\"")
     main()
