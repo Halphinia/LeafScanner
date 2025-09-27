@@ -2,14 +2,12 @@
 
 {% block content %}
 <div>
-    <h1 style="text-align: center; padding-bottom: 20px;">
-        Upload items here
-    </h1>
+  <h1 style="text-align: center; padding-bottom: 20px;">Upload items here</h1>
 </div>
-<!-- Drag & Drop Upload Block -->
+
 <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data" class="mx-auto" style="max-width: 720px;">
-  <!-- Hidden file input -->
-  <input id="file-input" type="file" name="files" multiple hidden>
+  <!-- Hidden file input (supports whole-folder selection on Chromium/Edge/Safari) -->
+  <input id="file-input" type="file" name="files" multiple webkitdirectory directory hidden>
 
   <!-- Dropzone (clickable) -->
   <label id="dropzone" for="file-input" class="dropzone d-flex flex-column justify-content-center align-items-center text-center">
@@ -19,51 +17,94 @@
       <line x1="5" y1="12" x2="19" y2="12"></line>
     </svg>
     <div class="mt-3">
-      <div class="fw-semibold">Drag & drop files here</div>
+      <div class="fw-semibold">Drag & drop files or folders here</div>
       <div class="text-muted small">or click to select</div>
     </div>
   </label>
 
-  <!-- Manual upload button -->
+  <!-- Manual picker -->
   <div class="text-center mt-3">
-    <button type="button" id="browse-btn" class="btn btn-primary">Choose files</button>
+    <button type="button" id="browse-btn" class="btn btn-primary">Choose files / folder</button>
   </div>
 
-  <!-- File list -->
-  <ul id="file-list" class="list-group list-group-flush mt-3"></ul>
+  <!-- Collapsible folder tree with thumbnail grids -->
+  <div id="file-tree" class="mt-3"></div>
 
-    <!-- Submit button -->
+  <!-- Submit -->
   <div class="text-center mt-4">
     <button type="submit" class="btn btn-success">Upload Files</button>
   </div>
-
 </form>
 
 <style>
   .dropzone {
-    border: 2px dashed #6c757d;
-    border-radius: 16px;
-    min-height: 240px;
-    background: #f8f9fa;
-    color: #495057;
-    cursor: pointer;
-    transition: background-color .2s, border-color .2s, box-shadow .2s;
-    user-select: none;
+    border: 2px dashed #6c757d; border-radius: 16px; min-height: 240px;
+    background: #f8f9fa; color: #495057; cursor: pointer;
+    transition: background-color .2s, border-color .2s, box-shadow .2s; user-select: none;
   }
-  .dropzone:hover,
-  .dropzone:focus-within {
-    border-color: #0d6efd;
-    box-shadow: 0 0 0 0.25rem rgba(13,110,253,.15);
+  .dropzone:hover, .dropzone:focus-within {
+    border-color: #0d6efd; box-shadow: 0 0 0 0.25rem rgba(13,110,253,.15);
   }
-  .dropzone.dragover {
-    background: #e7f1ff;
-    border-color: #0d6efd;
+  .dropzone.dragover { background: #e7f1ff; border-color: #0d6efd; }
+
+  /* Folder tree + chevron */
+  details.folder { margin: .25rem 0; }
+  details.folder summary {
+    list-style: none; cursor: pointer; padding: .25rem .5rem; border-radius: 6px; outline: none;
+    display: flex; align-items: center; gap: .5rem;
   }
-  .remove-btn {
-    cursor: pointer;
-    color: #dc3545;
-    font-weight: bold;
-    margin-left: auto;
+  details.folder[open] > summary { background: #eef5ff; }
+  .chev { display: inline-block; transition: transform .15s ease; font-weight: 600; }
+  details.folder[open] .chev { transform: rotate(90deg); } /* › rotates */
+  .folder-name { flex: 1; }
+
+  .remove-btn { cursor: pointer; color: #dc3545; font-weight: bold; user-select: none; }
+  .remove-btn:hover { filter: brightness(0.9); }
+
+  /* Thumbnail grid */
+  .thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: .5rem;
+    margin: .5rem 0 0 1.25rem; /* indent inside folders */
+  }
+  .thumb {
+    position: relative;
+    border: 1px solid #e3e3e3;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .thumb img,
+  .thumb .thumb-fallback {
+    width: 100%;
+    height: 100px;
+    object-fit: cover;
+    display: block;
+    background: #f1f3f5;
+  }
+  .thumb .thumb-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #6c757d;
+    padding: 4px;
+    text-align: center;
+  }
+  .thumb .filename {
+    font-size: 12px;
+    padding: 4px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .thumb .file-remove {
+    position: absolute;
+    top: 4px; right: 6px;
+    background: rgba(255,255,255,.9);
+    border-radius: 10px;
+    padding: 0 6px;
   }
 </style>
 
@@ -72,31 +113,18 @@
   const dropzone = document.getElementById('dropzone');
   const input    = document.getElementById('file-input');
   const browse   = document.getElementById('browse-btn');
-  const list     = document.getElementById('file-list');
+  const treeRoot = document.getElementById('file-tree');
 
+  // Internal store
   let files = [];
+  // Track created object URLs so we can revoke between renders
+  let createdURLs = new Set();
+
   browse.addEventListener('click', () => input.click());
 
-  function renderList() {
-    list.innerHTML = '';
-    files.forEach((file, idx) => {
-      const li = document.createElement('li');
-      li.className = 'list-group-item d-flex align-items-center';
-      const span = document.createElement('span');
-      span.textContent = file.webkitRelativePath || file.name;
-      const remove = document.createElement('span');
-      remove.innerHTML = '&times;';
-      remove.className = 'remove-btn ms-2';
-      remove.addEventListener('click', () => {
-        files.splice(idx, 1);
-        updateInput();
-        renderList();
-      });
-      li.appendChild(span);
-      li.appendChild(remove);
-      list.appendChild(li);
-    });
-  }
+  // --- Helpers ---------------------------------------------------------------
+  const relPathFor = (file) =>
+    file.webkitRelativePath && file.webkitRelativePath.length ? file.webkitRelativePath : file.name;
 
   function updateInput() {
     const dt = new DataTransfer();
@@ -104,10 +132,145 @@
     input.files = dt.files;
   }
 
+  function removeByIndices(indices) {
+    const toRemove = new Set(indices);
+    files = files.filter((_, idx) => !toRemove.has(idx));
+    updateInput();
+    renderTree();
+  }
+  const removeAtIndex = (idx) => removeByIndices([idx]);
+
+  function buildTrie() {
+    const root = { isDir: true, name: "", children: new Map() };
+    files.forEach((file, idx) => {
+      const parts = relPathFor(file).split('/').filter(Boolean);
+      let node = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        const last = i === parts.length - 1;
+        if (last) {
+          node.children.set(part, { isDir: false, name: part, fileIndex: idx });
+        } else {
+          if (!node.children.has(part)) {
+            node.children.set(part, { isDir: true, name: part, children: new Map() });
+          }
+          node = node.children.get(part);
+        }
+      }
+    });
+    return root;
+  }
+
+  function collectFileIndices(node, acc) {
+    if (!node) return acc;
+    if (node.isDir) {
+      for (const [, child] of node.children) collectFileIndices(child, acc);
+    } else if (typeof node.fileIndex === 'number') {
+      acc.push(node.fileIndex);
+    }
+    return acc;
+  }
+
+  function revokeAllURLs() {
+    for (const url of createdURLs) URL.revokeObjectURL(url);
+    createdURLs.clear();
+  }
+
+  function renderTree() {
+    // Clear previous thumbnails' object URLs
+    revokeAllURLs();
+
+    treeRoot.innerHTML = '';
+    const trie = buildTrie();
+    renderNodeChildren(trie, treeRoot);
+  }
+
+  function renderNodeChildren(dirNode, container) {
+    const folders = [];
+    const fileLeaves = [];
+    for (const [, child] of dirNode.children) {
+      (child.isDir ? folders : fileLeaves).push(child);
+    }
+    folders.sort((a,b) => a.name.localeCompare(b.name));
+    fileLeaves.sort((a,b) => a.name.localeCompare(b.name));
+
+    // Folders
+    folders.forEach(folderNode => {
+      const details = document.createElement('details');
+      details.className = 'folder';
+
+      const summary = document.createElement('summary');
+      summary.innerHTML = `
+        <span class="chev">›</span>
+        <span class="folder-name">📁 ${folderNode.name}</span>
+        <span class="remove-btn" title="Remove this folder and its files">&times;</span>
+      `;
+      summary.querySelector('.remove-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idxs = collectFileIndices(folderNode, []);
+        removeByIndices(idxs);
+      });
+      details.appendChild(summary);
+
+      const inner = document.createElement('div');
+      details.appendChild(inner);
+      container.appendChild(details);
+
+      // Recursively render subfolders / files into this folder
+      renderNodeChildren(folderNode, inner);
+    });
+
+    // Files at this level -> grid of thumbnails
+    if (fileLeaves.length) {
+      const grid = document.createElement('div');
+      grid.className = 'thumb-grid';
+
+      fileLeaves.forEach(fileNode => {
+        const f = files[fileNode.fileIndex];
+        const isImg = f.type && f.type.startsWith('image/');
+        const card = document.createElement('div');
+        card.className = 'thumb';
+
+        // remove button
+        const remove = document.createElement('span');
+        remove.className = 'remove-btn file-remove';
+        remove.innerHTML = '&times;';
+        remove.title = 'Remove this file';
+        remove.addEventListener('click', () => removeAtIndex(fileNode.fileIndex));
+        card.appendChild(remove);
+
+        if (isImg) {
+          const url = URL.createObjectURL(f);
+          createdURLs.add(url);
+          const img = document.createElement('img');
+          img.alt = f.name;
+          img.src = url;
+          card.appendChild(img);
+        } else {
+          const fallback = document.createElement('div');
+          fallback.className = 'thumb-fallback';
+          const ext = (f.name.split('.').pop() || '').toUpperCase();
+          fallback.textContent = ext ? `${ext} file` : 'File';
+          card.appendChild(fallback);
+        }
+
+        const caption = document.createElement('div');
+        caption.className = 'filename';
+        caption.textContent = f.name;
+        card.appendChild(caption);
+
+        grid.appendChild(card);
+      });
+
+      container.appendChild(grid);
+    }
+  }
+
+  // --- Events ----------------------------------------------------------------
   input.addEventListener('change', () => {
     files = [...files, ...input.files];
     updateInput();
-    renderList();
+    renderTree();
   });
 
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt =>
@@ -121,31 +284,28 @@
   );
 
   dropzone.addEventListener('drop', async e => {
-    const items = e.dataTransfer.items;
-    if (!items) return;
-
+    const items = e.dataTransfer && e.dataTransfer.items;
+    if (!items) {
+      const f = e.dataTransfer.files || [];
+      files = [...files, ...f];
+      updateInput(); renderTree();
+      return;
+    }
     const picked = [];
-    await Promise.all(
-      [...items].map(item => {
-        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
-        if (!entry) return;
-        return traverseEntry(entry, "");
-      })
-    );
+    await Promise.all([...items].map(item => {
+      const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+      if (!entry) return;
+      return traverseEntry(entry, "");
+    }));
 
     function traverseEntry(entry, path) {
       return new Promise(resolve => {
         if (entry.isFile) {
           entry.file(file => {
-
-            const relPath = path ? `${path}/${file.name}` : file.name;
-            const fileWithPath = new File([file], file.name, {
-              type: file.type,
-              lastModified: file.lastModified
-            });
-
-            Object.defineProperty(fileWithPath, 'webkitRelativePath', { value: relPath });
-            picked.push(fileWithPath);
+            const rel = path ? `${path}/${file.name}` : file.name;
+            const f2 = new File([file], file.name, { type: file.type, lastModified: file.lastModified });
+            Object.defineProperty(f2, 'webkitRelativePath', { value: rel });
+            picked.push(f2);
             resolve();
           });
         } else if (entry.isDirectory) {
@@ -166,11 +326,14 @@
 
     files = [...files, ...picked];
     updateInput();
-    renderList();
+    renderTree();
   });
+
+  // Initial
+  renderTree();
+
+  // Clean up on unload
+  window.addEventListener('beforeunload', revokeAllURLs);
 })();
 </script>
-
-
-
 {% endblock %}
