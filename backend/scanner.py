@@ -1,4 +1,12 @@
-import cv2
+from flask import request
 
-def imageLoader(imagePath):
-    img = cv2.imread(imagePath)
+
+'''
+Pipeline:
+1) Import images from HTML front
+2) 
+'''
+
+def imageLoader(folder):
+    #img = cv2.imread(imagePath)
+    print("ashdflkjashf")

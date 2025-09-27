@@ -7,7 +7,7 @@
     </h1>
 </div>
 <!-- Drag & Drop Upload Block -->
-<form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mx-auto" style="max-width: 720px;">
+<form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data" class="mx-auto" style="max-width: 720px;">
   <!-- Hidden file input -->
   <input id="file-input" type="file" name="files" multiple hidden>
 
@@ -31,6 +31,12 @@
 
   <!-- File list -->
   <ul id="file-list" class="list-group list-group-flush mt-3"></ul>
+
+    <!-- Submit button -->
+  <div class="text-center mt-4">
+    <button type="submit" class="btn btn-success">Upload Files</button>
+  </div>
+
 </form>
 
 <style>
@@ -68,9 +74,7 @@
   const browse   = document.getElementById('browse-btn');
   const list     = document.getElementById('file-list');
 
-  // internal file store (since input.files is read-only in JS)
   let files = [];
-
   browse.addEventListener('click', () => input.click());
 
   function renderList() {
@@ -78,10 +82,8 @@
     files.forEach((file, idx) => {
       const li = document.createElement('li');
       li.className = 'list-group-item d-flex align-items-center';
-
       const span = document.createElement('span');
-      span.textContent = file.name;
-
+      span.textContent = file.webkitRelativePath || file.name;
       const remove = document.createElement('span');
       remove.innerHTML = '&times;';
       remove.className = 'remove-btn ms-2';
@@ -90,7 +92,6 @@
         updateInput();
         renderList();
       });
-
       li.appendChild(span);
       li.appendChild(remove);
       list.appendChild(li);
@@ -98,25 +99,20 @@
   }
 
   function updateInput() {
-    // recreate a FileList using DataTransfer
     const dt = new DataTransfer();
     files.forEach(f => dt.items.add(f));
     input.files = dt.files;
   }
 
   input.addEventListener('change', () => {
-    files = [...files, ...input.files];  // merge new selections
+    files = [...files, ...input.files];
     updateInput();
     renderList();
   });
 
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt =>
-    dropzone.addEventListener(evt, e => {
-      e.preventDefault();
-      e.stopPropagation();
-    })
+    dropzone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); })
   );
-
   ['dragenter', 'dragover'].forEach(evt =>
     dropzone.addEventListener(evt, () => dropzone.classList.add('dragover'))
   );
@@ -124,15 +120,57 @@
     dropzone.addEventListener(evt, () => dropzone.classList.remove('dragover'))
   );
 
-  dropzone.addEventListener('drop', e => {
-    const dt = e.dataTransfer;
-    if (!dt || !dt.files) return;
-    files = [...files, ...dt.files];
+  dropzone.addEventListener('drop', async e => {
+    const items = e.dataTransfer.items;
+    if (!items) return;
+
+    const picked = [];
+    await Promise.all(
+      [...items].map(item => {
+        const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+        if (!entry) return;
+        return traverseEntry(entry, "");
+      })
+    );
+
+    function traverseEntry(entry, path) {
+      return new Promise(resolve => {
+        if (entry.isFile) {
+          entry.file(file => {
+
+            const relPath = path ? `${path}/${file.name}` : file.name;
+            const fileWithPath = new File([file], file.name, {
+              type: file.type,
+              lastModified: file.lastModified
+            });
+
+            Object.defineProperty(fileWithPath, 'webkitRelativePath', { value: relPath });
+            picked.push(fileWithPath);
+            resolve();
+          });
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const readAll = () => {
+            reader.readEntries(async entries => {
+              if (!entries.length) return resolve();
+              await Promise.all(entries.map(child => traverseEntry(child, path ? `${path}/${entry.name}` : entry.name)));
+              readAll();
+            });
+          };
+          readAll();
+        } else {
+          resolve();
+        }
+      });
+    }
+
+    files = [...files, ...picked];
     updateInput();
     renderList();
   });
 })();
 </script>
+
 
 
 {% endblock %}

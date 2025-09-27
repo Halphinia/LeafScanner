@@ -1,4 +1,4 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_bootstrap import Bootstrap
 from backend import scanner, renamer
 import os
@@ -22,9 +22,20 @@ def home():
 def aboutPage():
     return render_template('about.html')
 
-@app.route('/upload')
+@app.route('/upload', methods=['GET','POST'])
 def uploadPage():
-    return render_template('upload.html')
+    if request.method == "POST":
+        files = request.files.getlist("files")
+        if not files or all(f.filename == "" for f in files):
+            return render_template("errorPage.html")
+        saved = []
+        for f in files:
+            if f and f.filename:
+                saved.append(f.filename)
+        scanner.imageLoader(saved)
+        return render_template("processing.html")
+    else:
+        return render_template('upload.html')
 
 
 if __name__ == "__main__":
