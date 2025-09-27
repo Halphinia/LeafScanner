@@ -1,16 +1,71 @@
 {% extends "base.html" %}
-
 {% block content %}
+<div class="container" style="max-width: 720px;">
+  <h2 class="mt-3 mb-2 text-center">Processing images…</h2>
+  <p class="text-center text-muted">Batch: {{ batch_id }}</p>
 
-<div>
-    <h1 style="text-align: center; padding-bottom: 20px;">
-        hello hehehehehs
-    </h1>
+  <div class="progress" style="height: 24px;">
+    <div id="bar" class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+  </div>
+  <div id="msg" class="mt-2 text-center text-muted">Starting…</div>
+  <div id="eta" class="text-center small text-muted"></div>
+
+  <div id="done-actions" class="text-center mt-4" style="display:none;">
+    <a id="dl" class="btn btn-success" href="#">Download ZIP</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('uploadPage') }}">Upload more</a>
+  </div>
+
+  <div id="err" class="alert alert-danger mt-3" role="alert" style="display:none;"></div>
 </div>
 
+<script>
+(function(){
+  const batchId = "{{ batch_id }}";
+  const bar = document.getElementById('bar');
+  const msg = document.getElementById('msg');
+  const eta = document.getElementById('eta');
+  const done = document.getElementById('done-actions');
+  const dl = document.getElementById('dl');
+  const err = document.getElementById('err');
 
+  async function poll(){
+    try{
+      const r = await fetch(`/status/${batchId}`, {cache:'no-store'});
+      if(!r.ok){ throw new Error('status not found'); }
+      const s = await r.json();
 
+      const pct = Math.round((s.progress || 0)*100);
+      bar.style.width = pct + '%';
+      bar.textContent = pct + '%';
+      msg.textContent = s.message || '';
 
+      if (s.eta_seconds != null && s.status === 'running') {
+        const m = Math.floor(s.eta_seconds/60), sec = s.eta_seconds%60;
+        eta.textContent = `~ ${m}m ${sec}s remaining`;
+      } else {
+        eta.textContent = '';
+      }
 
-
+      if (s.status === 'done') {
+        done.style.display = '';
+        dl.href = `/download/${batchId}.zip`;
+        bar.classList.remove('bg-danger');
+        bar.classList.add('bg-success');
+        return; // stop polling
+      }
+      if (s.status === 'error') {
+        bar.classList.add('bg-danger');
+        err.style.display = '';
+        err.textContent = s.error || 'Unknown error.';
+        return; // stop polling
+      }
+      setTimeout(poll, 800);
+    } catch(e){
+      err.style.display = '';
+      err.textContent = 'Lost connection to status endpoint.';
+    }
+  }
+  poll();
+})();
+</script>
 {% endblock %}

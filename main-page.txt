@@ -1,0 +1,165 @@
+# app.py
+import os, uuid, time, io, zipfile, threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from typing import List, Optional
+from flask import Flask, request, render_template, redirect, url_for, jsonify, send_file, abort
+from werkzeug.utils import secure_filename
+from processor import process_batch  # <-- outside file
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 256 * 1024 * 1024  # 256MB
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_ROOT = os.path.join(BASE_DIR, "data")      # persistent working dir
+os.makedirs(DATA_ROOT, exist_ok=True)
+
+ALLOWED = {"png","jpg","jpeg","tif","tiff","gif","bmp","webp"}
+
+def allowed(fname: str) -> bool:
+    return "." in fname and fname.rsplit(".",1)[1].lower() in ALLOWED
+
+# -------- Task state --------
+@dataclass
+class TaskState:
+    status: str = "queued"       # queued | running | done | error
+    message: str = "Queued"
+    progress: float = 0.0        # 0..1
+    eta_seconds: Optional[float] = None
+    started_at: float = field(default_factory=time.time)
+    total: int = 0
+    completed: int = 0
+    error: Optional[str] = None
+    output_files: List[str] = field(default_factory=list)
+
+TASKS = {}
+TASKS_LOCK = threading.Lock()
+EXECUTOR = ThreadPoolExecutor(max_workers=2)
+
+def make_paths(batch_id: str):
+    batch_root = os.path.join(DATA_ROOT, batch_id)
+    in_dir  = os.path.join(batch_root, "input")
+    out_dir = os.path.join(batch_root, "output")
+    os.makedirs(in_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    return batch_root, in_dir, out_dir
+
+def submit_job(batch_id: str, in_dir: str, out_dir: str):
+    with TASKS_LOCK:
+        TASKS[batch_id] = TaskState(status="queued", message="Queued", progress=0.0)
+
+    def progress_cb(done, total, msg):
+        with TASKS_LOCK:
+            st = TASKS.get(batch_id)
+            if not st: return
+            st.status = "running"
+            st.completed = done
+            st.total = total
+            st.progress = done/total if total else 0.0
+            elapsed = max(0.001, time.time() - st.started_at)
+            rate = done/elapsed if elapsed and done else None
+            st.eta_seconds = int((total-done)/rate) if rate else None
+            st.message = msg
+
+    def job():
+        try:
+            process_batch(in_dir, out_dir, progress_cb=progress_cb)
+            # collect outputs
+            outs = []
+            for root, _, files in os.walk(out_dir):
+                for f in files:
+                    rel = os.path.relpath(os.path.join(root, f), out_dir)
+                    outs.append(rel)
+            with TASKS_LOCK:
+                st = TASKS.get(batch_id)
+                if st:
+                    st.status = "done"
+                    st.message = f"Done. {len(outs)} files ready."
+                    st.progress = 1.0
+                    st.output_files = sorted(outs)
+        except Exception as e:
+            with TASKS_LOCK:
+                st = TASKS.get(batch_id)
+                if st:
+                    st.status = "error"
+                    st.error = str(e)
+                    st.message = "Error during processing."
+
+    EXECUTOR.submit(job)
+
+# -------- Routes --------
+@app.route("/")
+def index():
+    return redirect(url_for("uploadPage"))
+
+@app.route("/upload", methods=["GET","POST"])
+def uploadPage():
+    if request.method == "GET":
+        return render_template("upload.html")
+
+    files = request.files.getlist("files")
+    if not files:
+        return render_template("upload.html", error="No files received.")
+
+    batch_id = uuid.uuid4().hex[:8]
+    batch_root, in_dir, out_dir = make_paths(batch_id)
+
+    count = 0
+    for f in files:
+        if not f or not f.filename: continue
+        fname = secure_filename(f.filename)
+        if not allowed(fname): continue
+        fn_path = os.path.join(in_dir, fname)
+        os.makedirs(os.path.dirname(fn_path), exist_ok=True)
+        f.save(fn_path)
+        count += 1
+
+    if count == 0:
+        return render_template("upload.html", error="No valid image files.")
+
+    submit_job(batch_id, in_dir, out_dir)
+    return redirect(url_for("processing_page", batch_id=batch_id))
+
+@app.route("/processing/<batch_id>")
+def processing_page(batch_id):
+    # Basic existence check
+    batch_root = os.path.join(DATA_ROOT, batch_id)
+    if not os.path.isdir(batch_root):
+        abort(404)
+    return render_template("processing.html", batch_id=batch_id)
+
+@app.route("/status/<batch_id>")
+def status(batch_id):
+    with TASKS_LOCK:
+        st = TASKS.get(batch_id)
+        if not st:
+            return jsonify({"status":"unknown"}), 404
+        return jsonify({
+            "status": st.status,
+            "message": st.message,
+            "progress": st.progress,
+            "eta_seconds": st.eta_seconds,
+            "completed": st.completed,
+            "total": st.total,
+            "error": st.error,
+            "output_files": st.output_files if st.status=="done" else []
+        })
+
+@app.route("/download/<batch_id>.zip")
+def download_zip(batch_id):
+    _, _, out_dir = make_paths(batch_id)
+    if not os.path.isdir(out_dir):
+        abort(404)
+    # zip in-memory for simplicity
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, _, files in os.walk(out_dir):
+            for fn in files:
+                abs_p = os.path.join(root, fn)
+                rel_p = os.path.relpath(abs_p, out_dir)
+                zf.write(abs_p, rel_p)
+    mem.seek(0)
+    return send_file(mem, as_attachment=True, download_name=f"{batch_id}.zip", mimetype="application/zip")
+
+if __name__ == "__main__":
+    app.run(debug=True)
